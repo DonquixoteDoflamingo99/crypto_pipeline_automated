@@ -124,8 +124,9 @@ resource "google_dataproc_cluster" "cluster" {
   }
 }
 
-# Workflow template for Spark jobs
+# Workflow template for Spark jobs (only created if staging_bucket is provided)
 resource "google_dataproc_workflow_template" "spark_streaming" {
+  count    = var.staging_bucket != null ? 1 : 0
   name     = "${var.cluster_name}-streaming-workflow"
   location = var.region
   project  = var.project_id

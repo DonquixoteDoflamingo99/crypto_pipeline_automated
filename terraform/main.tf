@@ -122,6 +122,7 @@ module "dataproc" {
   cluster_name    = var.dataproc_cluster_name
   network_id      = module.networking.network_id
   subnetwork_id   = module.networking.subnetwork_id
+  staging_bucket  = google_storage_bucket.data_bucket.name
 
   master_config = {
     machine_type   = var.dataproc_master_machine_type
@@ -141,7 +142,8 @@ module "dataproc" {
 
   depends_on = [
     google_project_service.apis,
-    module.networking
+    module.networking,
+    google_storage_bucket.data_bucket
   ]
 }
 

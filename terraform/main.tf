@@ -1,157 +1,279 @@
-# Provider configuration
+/**
+ * Crypto Pipeline Infrastructure - Main Configuration
+ *
+ * This is the root Terraform configuration that orchestrates
+ * all infrastructure modules for the crypto data pipeline.
+ */
+
 terraform {
+  required_version = ">= 1.5.0"
+
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
       version = "~> 5.0"
     }
   }
+
+  # Backend configuration for state management
+  # Uncomment and configure for production use
+  # backend "gcs" {
+  #   bucket = "your-terraform-state-bucket"
+  #   prefix = "crypto-pipeline/state"
+  # }
 }
 
-provider "aws" {
-  region = var.aws_region
+provider "google" {
+  project = var.project_id
+  region  = var.region
 }
 
-# S3 Data Lake
-resource "aws_s3_bucket" "crypto_data_lake" {
-  bucket = "${var.project_name}-data-lake-${random_string.suffix.result}"
+provider "google-beta" {
+  project = var.project_id
+  region  = var.region
 }
 
-resource "aws_s3_bucket_versioning" "crypto_data_lake_versioning" {
-  bucket = aws_s3_bucket.crypto_data_lake.id
-  versioning_configuration {
-    status = "Enabled"
+# Enable required APIs
+resource "google_project_service" "apis" {
+  for_each = toset([
+    "pubsub.googleapis.com",
+    "bigquery.googleapis.com",
+    "dataproc.googleapis.com",
+    "composer.googleapis.com",
+    "storage.googleapis.com",
+    "monitoring.googleapis.com",
+    "logging.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "iam.googleapis.com",
+  ])
+
+  project            = var.project_id
+  service            = each.key
+  disable_on_destroy = false
+}
+
+# Networking Module
+module "networking" {
+  source = "./modules/networking"
+
+  project_id   = var.project_id
+  region       = var.region
+  environment  = var.environment
+  network_name = "${var.project_name}-network"
+
+  depends_on = [google_project_service.apis]
+}
+
+# Pub/Sub Module
+module "pubsub" {
+  source = "./modules/pubsub"
+
+  project_id        = var.project_id
+  environment       = var.environment
+  topic_name        = var.pubsub_topic_name
+  subscription_name = var.pubsub_subscription_name
+  dlq_topic_name    = "${var.pubsub_topic_name}-dlq"
+
+  message_retention_duration = "604800s" # 7 days
+  ack_deadline_seconds       = 60
+
+  depends_on = [google_project_service.apis]
+}
+
+# BigQuery Module
+module "bigquery" {
+  source = "./modules/bigquery"
+
+  project_id   = var.project_id
+  region       = var.region
+  environment  = var.environment
+  dataset_id   = var.bigquery_dataset
+  location     = var.bigquery_location
+
+  tables = {
+    transactions = {
+      partition_field  = "trade_date"
+      clustering_fields = ["symbol", "trade_hour"]
+    }
+    hourly_aggregates = {
+      partition_field  = "hour_timestamp"
+      clustering_fields = ["symbol"]
+    }
+    daily_aggregates = {
+      partition_field  = "trade_date"
+      clustering_fields = ["symbol"]
+    }
   }
+
+  depends_on = [google_project_service.apis]
 }
 
-# Kinesis Data Stream
-resource "aws_kinesis_stream" "crypto_stream" {
-  name             = "${var.project_name}-crypto-stream"
-  shard_count      = 2
-  retention_period = 168 # 7 days
+# Dataproc Module
+module "dataproc" {
+  source = "./modules/dataproc"
 
-  shard_level_metrics = [
-    "IncomingRecords",
-    "OutgoingRecords",
+  project_id      = var.project_id
+  region          = var.region
+  environment     = var.environment
+  cluster_name    = var.dataproc_cluster_name
+  network_id      = module.networking.network_id
+  subnetwork_id   = module.networking.subnetwork_id
+  staging_bucket  = google_storage_bucket.data_bucket.name
+
+  master_config = {
+    machine_type   = var.dataproc_master_machine_type
+    boot_disk_size = 500
+  }
+
+  worker_config = {
+    num_instances  = var.dataproc_num_workers
+    machine_type   = var.dataproc_worker_machine_type
+    boot_disk_size = 500
+  }
+
+  spark_properties = {
+    "spark:spark.jars.packages" = "com.google.cloud.spark:spark-bigquery-with-dependencies_2.12:0.32.0"
+    "spark:spark.streaming.backpressure.enabled" = "true"
+  }
+
+  depends_on = [
+    google_project_service.apis,
+    module.networking,
+    google_storage_bucket.data_bucket
   ]
-
-  stream_mode_details {
-    stream_mode = "PROVISIONED"
-  }
 }
 
-# DynamoDB for real-time data
-resource "aws_dynamodb_table" "crypto_prices" {
-  name           = "${var.project_name}-crypto-prices"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "symbol"
-  range_key      = "timestamp"
+# Cloud Composer Module
+module "composer" {
+  source = "./modules/composer"
 
-  attribute {
-    name = "symbol"
-    type = "S"
+  project_id       = var.project_id
+  region           = var.region
+  environment      = var.environment
+  environment_name = var.composer_environment_name
+  network_id       = module.networking.network_id
+  subnetwork_id    = module.networking.subnetwork_id
+
+  airflow_config_overrides = {
+    "core-dags_are_paused_at_creation" = "True"
+    "webserver-expose_config"          = "False"
   }
 
-  attribute {
-    name = "timestamp"
-    type = "N"
+  env_variables = {
+    GCP_PROJECT_ID     = var.project_id
+    BIGQUERY_DATASET   = var.bigquery_dataset
+    PUBSUB_TOPIC       = var.pubsub_topic_name
+    DATAPROC_CLUSTER   = var.dataproc_cluster_name
   }
 
-  ttl {
-    attribute_name = "ttl"
-    enabled        = true
-  }
+  depends_on = [
+    google_project_service.apis,
+    module.networking
+  ]
 }
 
-# EMR Cluster for Spark Streaming
-resource "aws_emr_cluster" "crypto_processing" {
-  name          = "${var.project_name}-emr-cluster"
-  release_label = "emr-6.15.0"
-  applications  = ["Spark", "Hadoop", "Hive"]
-  
-  service_role = aws_iam_role.emr_service_role.arn
-  
-  master_instance_group {
-    instance_type = "m5.xlarge"
+# Cloud Storage Buckets
+resource "google_storage_bucket" "data_bucket" {
+  name          = "${var.project_id}-${var.environment}-data"
+  location      = var.region
+  force_destroy = var.environment != "prod"
+
+  uniform_bucket_level_access = true
+
+  versioning {
+    enabled = true
   }
-  
-  core_instance_group {
-    instance_count = 2
-    instance_type  = "m5.large"
-  }
-  
-  ec2_attributes {
-    subnet_id                         = aws_subnet.private.id
-    emr_managed_master_security_group = aws_security_group.emr_master.id
-    emr_managed_slave_security_group  = aws_security_group.emr_slave.id
-    instance_profile                  = aws_iam_instance_profile.emr_profile.arn
-  }
-  
-  auto_scaling_policy {
-    constraints {
-      min_capacity = 1
-      max_capacity = 5
+
+  lifecycle_rule {
+    action {
+      type = "Delete"
     }
-    
-    rules {
-      name         = "ScaleOutMemoryPercentage"
-      description  = "Scale out if YARNMemoryAvailablePercentage is less than 15"
-      action {
-        simple_scaling_policy_configuration {
-          adjustment_type          = "CHANGE_IN_CAPACITY"
-          scaling_adjustment       = 1
-          cooldown                 = 300
-        }
-      }
-      trigger {
-        cloud_watch_alarm_definition {
-          comparison_operator = "LESS_THAN"
-          evaluation_periods  = 1
-          metric_name        = "YARNMemoryAvailablePercentage"
-          namespace          = "AWS/ElasticMapReduce"
-          period             = 300
-          statistic          = "AVERAGE"
-          threshold          = 15.0
-        }
-      }
+    condition {
+      age = 90
     }
   }
+
+  labels = {
+    environment = var.environment
+    project     = var.project_name
+  }
+
+  depends_on = [google_project_service.apis]
 }
 
-# Lambda for data ingestion
-resource "aws_lambda_function" "crypto_ingestion" {
-  filename      = "crypto_ingestion.zip"
-  function_name = "${var.project_name}-crypto-ingestion"
-  role          = aws_iam_role.lambda_role.arn
-  handler       = "lambda_function.lambda_handler"
-  runtime       = "python3.11"
-  timeout       = 60
+resource "google_storage_bucket" "checkpoint_bucket" {
+  name          = "${var.project_id}-${var.environment}-checkpoints"
+  location      = var.region
+  force_destroy = var.environment != "prod"
 
-  environment {
-    variables = {
-      KINESIS_STREAM_NAME = aws_kinesis_stream.crypto_stream.name
-      DYNAMODB_TABLE_NAME = aws_dynamodb_table.crypto_prices.name
+  uniform_bucket_level_access = true
+
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      age = 30
     }
   }
+
+  labels = {
+    environment = var.environment
+    project     = var.project_name
+  }
+
+  depends_on = [google_project_service.apis]
 }
 
-# CloudWatch Event Rule for Lambda trigger
-resource "aws_cloudwatch_event_rule" "crypto_ingestion_schedule" {
-  name                = "${var.project_name}-ingestion-schedule"
-  description         = "Trigger crypto data ingestion every minute"
-  schedule_expression = "rate(1 minute)"
+resource "google_storage_bucket" "temp_bucket" {
+  name          = "${var.project_id}-${var.environment}-temp"
+  location      = var.region
+  force_destroy = true
+
+  uniform_bucket_level_access = true
+
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      age = 7
+    }
+  }
+
+  labels = {
+    environment = var.environment
+    project     = var.project_name
+  }
+
+  depends_on = [google_project_service.apis]
 }
 
-resource "aws_cloudwatch_event_target" "lambda_target" {
-  rule      = aws_cloudwatch_event_rule.crypto_ingestion_schedule.name
-  target_id = "TriggerLambda"
-  arn       = aws_lambda_function.crypto_ingestion.arn
+# Service Account for Pipeline
+resource "google_service_account" "pipeline_sa" {
+  account_id   = "crypto-pipeline-sa"
+  display_name = "Crypto Pipeline Service Account"
+  project      = var.project_id
 }
 
-resource "aws_lambda_permission" "allow_cloudwatch" {
-  statement_id  = "AllowExecutionFromCloudWatch"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.crypto_ingestion.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.crypto_ingestion_schedule.arn
+# IAM bindings for service account
+resource "google_project_iam_member" "pipeline_sa_roles" {
+  for_each = toset([
+    "roles/bigquery.dataEditor",
+    "roles/bigquery.jobUser",
+    "roles/pubsub.publisher",
+    "roles/pubsub.subscriber",
+    "roles/storage.objectAdmin",
+    "roles/dataproc.worker",
+    "roles/monitoring.metricWriter",
+    "roles/logging.logWriter",
+  ])
+
+  project = var.project_id
+  role    = each.key
+  member  = "serviceAccount:${google_service_account.pipeline_sa.email}"
 }

@@ -1,29 +1,38 @@
-# Core dependencies
-pyspark==3.4.1
-boto3==1.28.57
-requests==2.31.0
-pandas==2.0.3
-numpy==1.24.3
-scipy==1.11.2
+# Core Dependencies
+google-cloud-pubsub>=2.18.0
+google-cloud-bigquery>=3.13.0
+google-cloud-storage>=2.13.0
+google-cloud-dataproc>=5.7.0
+google-cloud-monitoring>=2.16.0
+google-cloud-logging>=3.8.0
 
-# AWS specific
-awswrangler==3.4.0
-s3fs==2023.6.0
+# Apache Spark (for local development)
+pyspark>=3.5.0
 
-# Data processing
-pyarrow==12.0.1
-fastparquet==2023.7.0
+# Data Processing
+pandas>=2.1.0
+pyarrow>=14.0.0
+numpy>=1.26.0
 
-# Monitoring
-prometheus-client==0.17.1
-psutil==5.9.5
+# Schema Management
+jsonschema>=4.20.0
+fastavro>=1.9.0
+
+# API & Async
+aiohttp>=3.9.0
+websockets>=12.0
+requests>=2.31.0
 
 # Configuration
-python-dotenv==1.0.0
-pydantic==2.1.1
-pydantic-settings==2.0.2
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
 
 # Utilities
-click==8.1.6
-colorama==0.4.6
-tqdm==4.65.0
+structlog>=23.2.0
+tenacity>=8.2.0
+click>=8.1.0
+
+# Date/Time
+python-dateutil>=2.8.0
+pytz>=2023.3

@@ -1,0 +1,37 @@
+# Pub/Sub Publisher Container
+# Ingests data from crypto APIs and publishes to Pub/Sub
+
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 publisher
+USER publisher
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements
+COPY --chown=publisher:publisher requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Copy source code
+COPY --chown=publisher:publisher src/ ./src/
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PATH="/home/publisher/.local/bin:${PATH}"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import src.streaming.publisher; print('healthy')" || exit 1
+
+# Default command
+ENTRYPOINT ["python", "-m", "src.streaming.publisher"]

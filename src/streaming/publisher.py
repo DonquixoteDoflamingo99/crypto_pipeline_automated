@@ -7,8 +7,8 @@ transaction data to Google Cloud Pub/Sub for downstream processing.
 
 import asyncio
 import json
+import platform
 import signal
-import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -106,7 +106,7 @@ class CryptoPublisher:
     def _publish_callback(self, future):
         """Handle publish result."""
         try:
-            message_id = future.result()
+            future.result()  # Raises exception if publish failed
             self._publish_count += 1
             if self._publish_count % 10000 == 0:
                 logger.info(
@@ -178,10 +178,11 @@ class CryptoPublisher:
         """Run the publisher with automatic reconnection."""
         self._running = True
 
-        # Setup signal handlers
-        loop = asyncio.get_event_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, self.stop)
+        # Setup signal handlers (Unix only - Windows uses KeyboardInterrupt)
+        if platform.system() != "Windows":
+            loop = asyncio.get_event_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, self.stop)
 
         logger.info("Starting CryptoPublisher")
 

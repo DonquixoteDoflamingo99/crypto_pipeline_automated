@@ -119,8 +119,8 @@ def check_cluster_exists(**context) -> str:
         return "create_cluster"
 
 
-def check_streaming_job_running(**context) -> bool:
-    """Check if streaming job is still running."""
+def check_streaming_job_running(**context) -> str:
+    """Check if streaming job is already running and branch accordingly."""
     from google.cloud import dataproc_v1
 
     client = dataproc_v1.JobControllerClient(
@@ -128,19 +128,22 @@ def check_streaming_job_running(**context) -> bool:
     )
 
     # List recent jobs
-    jobs = client.list_jobs(
-        project_id=PROJECT_ID,
-        region=REGION,
-        cluster_name=CLUSTER_NAME,
-        job_state_matcher=dataproc_v1.ListJobsRequest.JobStateMatcher.ACTIVE,
-    )
+    try:
+        jobs = client.list_jobs(
+            project_id=PROJECT_ID,
+            region=REGION,
+            cluster_name=CLUSTER_NAME,
+            job_state_matcher=dataproc_v1.ListJobsRequest.JobStateMatcher.ACTIVE,
+        )
 
-    for job in jobs:
-        if "spark_streaming" in job.reference.job_id:
-            context["task_instance"].xcom_push(key="active_job_id", value=job.reference.job_id)
-            return True
+        for job in jobs:
+            if "spark_streaming" in job.reference.job_id:
+                context["task_instance"].xcom_push(key="active_job_id", value=job.reference.job_id)
+                return "job_already_running"
+    except Exception:
+        pass  # Cluster may not exist yet, proceed to submit job
 
-    return False
+    return "submit_spark_streaming_job"
 
 
 def log_pipeline_metrics(**context) -> None:
@@ -203,11 +206,17 @@ with DAG(
         python_callable=lambda: print("Cluster already exists"),
     )
 
-    # Check if streaming job is running
-    check_job = PythonOperator(
+    # Check if streaming job is running (branches to skip or submit)
+    check_job = BranchPythonOperator(
         task_id="check_streaming_job",
         python_callable=check_streaming_job_running,
         trigger_rule=TriggerRule.ONE_SUCCESS,
+    )
+
+    # Skip task when job is already running
+    job_already_running = PythonOperator(
+        task_id="job_already_running",
+        python_callable=lambda: print("Streaming job already running, skipping submission"),
     )
 
     # Submit streaming job
@@ -223,9 +232,10 @@ with DAG(
     log_metrics = PythonOperator(
         task_id="log_pipeline_metrics",
         python_callable=log_pipeline_metrics,
-        trigger_rule=TriggerRule.ALL_DONE,
+        trigger_rule=TriggerRule.ONE_SUCCESS,
     )
 
     # Define task dependencies
     check_cluster >> [create_cluster, cluster_exists]
-    [create_cluster, cluster_exists] >> check_job >> submit_spark_job >> log_metrics
+    [create_cluster, cluster_exists] >> check_job >> [submit_spark_job, job_already_running]
+    [submit_spark_job, job_already_running] >> log_metrics

@@ -1,0 +1,38 @@
+# Core Dependencies
+google-cloud-pubsub>=2.18.0
+google-cloud-bigquery>=3.13.0
+google-cloud-storage>=2.13.0
+google-cloud-dataproc>=5.7.0
+google-cloud-monitoring>=2.16.0
+google-cloud-logging>=3.8.0
+
+# Apache Spark (for local development)
+pyspark>=3.5.0
+
+# Data Processing
+pandas>=2.1.0
+pyarrow>=14.0.0
+numpy>=1.26.0
+
+# Schema Management
+jsonschema>=4.20.0
+fastavro>=1.9.0
+
+# API & Async
+aiohttp>=3.9.0
+websockets>=12.0
+requests>=2.31.0
+
+# Configuration
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Utilities
+structlog>=23.2.0
+tenacity>=8.2.0
+click>=8.1.0
+
+# Date/Time
+python-dateutil>=2.8.0
+pytz>=2023.3

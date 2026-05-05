@@ -80,12 +80,16 @@ resource "google_composer_environment" "main" {
   }
 }
 
-# IAM binding for DAG bucket access
+# IAM binding for DAG bucket access (only if service_account is provided)
 resource "google_storage_bucket_iam_member" "dag_bucket_access" {
-  bucket = replace(
+  count = var.service_account != null ? 1 : 0
+
+  # Extract bucket name from gs://bucket-name/dags format
+  bucket = split("/", replace(
     google_composer_environment.main.config[0].dag_gcs_prefix,
     "gs://", ""
-  )
+  ))[0]
+
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${var.service_account}"
 

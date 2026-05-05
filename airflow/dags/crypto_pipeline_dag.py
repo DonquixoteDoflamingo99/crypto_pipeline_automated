@@ -16,12 +16,7 @@ from airflow.models import Variable
 from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.providers.google.cloud.operators.dataproc import (
     DataprocCreateClusterOperator,
-    DataprocDeleteClusterOperator,
     DataprocSubmitJobOperator,
-)
-from airflow.providers.google.cloud.sensors.dataproc import DataprocJobSensor
-from airflow.providers.google.cloud.operators.pubsub import (
-    PubSubPullSensor,
 )
 from airflow.utils.trigger_rule import TriggerRule
 
